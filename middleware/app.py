@@ -102,6 +102,7 @@ class PrometheusMetrics:
 
     def to_prometheus_text(self) -> str:
         with self._lock:
+            avg = round(sum(self.latencies) / len(self.latencies), 2) if self.latencies else 0.0
             lines = [
                 "# HELP middleware_requests_total Total HTTP requests received",
                 "# TYPE middleware_requests_total counter",
@@ -113,7 +114,7 @@ class PrometheusMetrics:
                 "",
                 "# HELP middleware_average_latency_ms Average request latency in milliseconds",
                 "# TYPE middleware_average_latency_ms gauge",
-                f"middleware_average_latency_ms {self.average_latency_ms}",
+                f"middleware_average_latency_ms {avg}",
                 "",
                 "# HELP middleware_enrollments_created_total Total enrollments successfully created",
                 "# TYPE middleware_enrollments_created_total counter",
@@ -131,10 +132,11 @@ class PrometheusMetrics:
 
     def to_json(self) -> dict:
         with self._lock:
+            avg = round(sum(self.latencies) / len(self.latencies), 2) if self.latencies else 0.0
             return {
                 "requests_total": self.requests_total,
                 "errors_total": self.errors_total,
-                "average_latency_ms": self.average_latency_ms,
+                "average_latency_ms": avg,
                 "enrollments_created_total": self.enrollments_created_total,
                 "retries_total": self.retries_total,
                 "circuit_breaker_open_total": self.circuit_breaker_open_total,

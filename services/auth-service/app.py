@@ -48,7 +48,7 @@ logger.addHandler(handler)
 # JWT Config
 # ---------------------------------------------------------------------------
 
-JWT_SECRET = os.getenv("JWT_SECRET", "super-secret-key-change-in-production")
+JWT_SECRET = os.getenv("JWT_SECRET", "super-secret-jwt-key-change-in-production")
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRATION_MINUTES = 60
 
