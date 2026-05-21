@@ -1,33 +1,36 @@
 """
-Middleware API – Enrollment System
-===================================
-Central orchestrator that authenticates requests, calls downstream
-services (course-service, enrollment-service) with resilience patterns,
-publishes events to RabbitMQ, and exposes health / metrics endpoints.
+Middleware API — Sistema de Matrículas
+=======================================
+Orquestrador central com:
+  • Autenticação JWT via auth-service
+  • Circuit Breaker (CLOSED / OPEN / HALF-OPEN)
+  • Retry com backoff exponencial + timeout
+  • Correlation ID em todas as requisições
+  • Métricas no formato Prometheus
+  • Publicação de eventos no RabbitMQ (assíncrona)
 """
 
 import asyncio
+import enum
 import json
 import logging
+import os
 import time
 import uuid
 from datetime import datetime, timezone
-from functools import wraps
-from threading import Thread
-from typing import List
+from threading import Lock, Thread
+from typing import List, Optional
 
 import httpx
 import pika
-from fastapi import FastAPI, Request, Response, HTTPException, Depends
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, HTTPException, Request, Response, Depends
+from fastapi.responses import JSONResponse, PlainTextResponse
 
 # ---------------------------------------------------------------------------
 # Structured JSON Logging
 # ---------------------------------------------------------------------------
 
 class JSONFormatter(logging.Formatter):
-    """Emit each log record as a single JSON line."""
-
     def format(self, record: logging.LogRecord) -> str:
         log_entry = {
             "service": "middleware",
@@ -47,116 +50,183 @@ _handler.setFormatter(JSONFormatter())
 logger.addHandler(_handler)
 
 # ---------------------------------------------------------------------------
-# In-memory Metrics
+# Service URLs (from env)
 # ---------------------------------------------------------------------------
 
-class Metrics:
+COURSE_SERVICE_URL    = os.getenv("COURSE_SERVICE_URL",    "http://course-service:8000")
+ENROLLMENT_SERVICE_URL = os.getenv("ENROLLMENT_SERVICE_URL", "http://enrollment-service:8000")
+AUTH_SERVICE_URL       = os.getenv("AUTH_SERVICE_URL",       "http://auth-service:8000")
+RABBITMQ_HOST          = os.getenv("RABBITMQ_HOST",          "rabbitmq")
+RABBITMQ_PORT          = int(os.getenv("RABBITMQ_PORT",      "5672"))
+RABBITMQ_QUEUE         = "enrollment_notifications"
+
+# ---------------------------------------------------------------------------
+# Prometheus-compatible Metrics
+# ---------------------------------------------------------------------------
+
+class PrometheusMetrics:
     def __init__(self):
+        self._lock = Lock()
         self.requests_total: int = 0
         self.errors_total: int = 0
         self.latencies: List[float] = []
+        self.circuit_breaker_open_total: int = 0
+        self.retries_total: int = 0
+        self.enrollments_created_total: int = 0
+
+    def record_request(self, latency_ms: float, is_error: bool = False):
+        with self._lock:
+            self.requests_total += 1
+            self.latencies.append(latency_ms)
+            if is_error:
+                self.errors_total += 1
+
+    def record_enrollment(self):
+        with self._lock:
+            self.enrollments_created_total += 1
+
+    def record_retry(self):
+        with self._lock:
+            self.retries_total += 1
+
+    def record_circuit_open(self):
+        with self._lock:
+            self.circuit_breaker_open_total += 1
 
     @property
     def average_latency_ms(self) -> float:
-        if not self.latencies:
-            return 0.0
-        return round(sum(self.latencies) / len(self.latencies), 2)
+        with self._lock:
+            if not self.latencies:
+                return 0.0
+            return round(sum(self.latencies) / len(self.latencies), 2)
 
-    def record_request(self, latency_ms: float, is_error: bool = False):
-        self.requests_total += 1
-        self.latencies.append(latency_ms)
-        if is_error:
-            self.errors_total += 1
+    def to_prometheus_text(self) -> str:
+        with self._lock:
+            lines = [
+                "# HELP middleware_requests_total Total HTTP requests received",
+                "# TYPE middleware_requests_total counter",
+                f"middleware_requests_total {self.requests_total}",
+                "",
+                "# HELP middleware_errors_total Total HTTP errors (4xx/5xx)",
+                "# TYPE middleware_errors_total counter",
+                f"middleware_errors_total {self.errors_total}",
+                "",
+                "# HELP middleware_average_latency_ms Average request latency in milliseconds",
+                "# TYPE middleware_average_latency_ms gauge",
+                f"middleware_average_latency_ms {self.average_latency_ms}",
+                "",
+                "# HELP middleware_enrollments_created_total Total enrollments successfully created",
+                "# TYPE middleware_enrollments_created_total counter",
+                f"middleware_enrollments_created_total {self.enrollments_created_total}",
+                "",
+                "# HELP middleware_retries_total Total downstream retries attempted",
+                "# TYPE middleware_retries_total counter",
+                f"middleware_retries_total {self.retries_total}",
+                "",
+                "# HELP middleware_circuit_breaker_open_total Times circuit breaker opened",
+                "# TYPE middleware_circuit_breaker_open_total counter",
+                f"middleware_circuit_breaker_open_total {self.circuit_breaker_open_total}",
+            ]
+            return "\n".join(lines) + "\n"
+
+    def to_json(self) -> dict:
+        with self._lock:
+            return {
+                "requests_total": self.requests_total,
+                "errors_total": self.errors_total,
+                "average_latency_ms": self.average_latency_ms,
+                "enrollments_created_total": self.enrollments_created_total,
+                "retries_total": self.retries_total,
+                "circuit_breaker_open_total": self.circuit_breaker_open_total,
+            }
 
 
-metrics = Metrics()
-
-# ---------------------------------------------------------------------------
-# Token-based Auth
-# ---------------------------------------------------------------------------
-
-TOKEN_MAP = {
-    "student-token": "student",
-    "admin-token": "admin",
-}
-
-
-def _extract_role(request: Request) -> str:
-    """Return the role string or raise 401."""
-    auth_header = request.headers.get("Authorization", "")
-    if not auth_header.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Missing or invalid token")
-    token = auth_header[len("Bearer "):]
-    role = TOKEN_MAP.get(token)
-    if role is None:
-        raise HTTPException(status_code=401, detail="Invalid token")
-    return role
-
-
-def require_roles(*allowed_roles: str):
-    """FastAPI dependency that checks the caller's role."""
-
-    def _dependency(request: Request) -> str:
-        role = _extract_role(request)
-        if role not in allowed_roles:
-            raise HTTPException(status_code=403, detail="Insufficient permissions")
-        return role
-
-    return _dependency
-
-# ---------------------------------------------------------------------------
-# Correlation ID helper
-# ---------------------------------------------------------------------------
-
-def get_correlation_id(request: Request) -> str:
-    return request.headers.get("X-Correlation-ID") or str(uuid.uuid4())
+metrics = PrometheusMetrics()
 
 # ---------------------------------------------------------------------------
-# FastAPI App
+# Circuit Breaker
 # ---------------------------------------------------------------------------
 
-app = FastAPI(title="Middleware API – Enrollment System")
+class CBState(enum.Enum):
+    CLOSED    = "closed"
+    OPEN      = "open"
+    HALF_OPEN = "half_open"
 
-# -- Middleware: metrics + correlation id in response -------------------------
 
-@app.middleware("http")
-async def metrics_and_correlation_middleware(request: Request, call_next):
-    start = time.perf_counter()
-    correlation_id = get_correlation_id(request)
+class CircuitBreaker:
+    """
+    Simples circuit breaker por serviço.
+    CLOSED  → requisições normais
+    OPEN    → falha rápida por `reset_timeout` segundos
+    HALF_OPEN → testa uma requisição; se OK, fecha; se falha, reabre
+    """
 
-    # Stash for downstream usage inside route handlers
-    request.state.correlation_id = correlation_id
+    def __init__(self, name: str, failure_threshold: int = 3, reset_timeout: float = 30.0):
+        self.name = name
+        self.failure_threshold = failure_threshold
+        self.reset_timeout = reset_timeout
+        self._state = CBState.CLOSED
+        self._failure_count = 0
+        self._opened_at: Optional[float] = None
+        self._lock = Lock()
 
-    response: Response = await call_next(request)
+    @property
+    def state(self) -> CBState:
+        with self._lock:
+            if self._state == CBState.OPEN:
+                if time.monotonic() - self._opened_at >= self.reset_timeout:
+                    self._state = CBState.HALF_OPEN
+                    logger.info(
+                        "circuit_breaker_half_open",
+                        extra={"event": "circuit_breaker_half_open", "correlation_id": None,
+                               "status": "warning", "details": {"service": self.name}},
+                    )
+            return self._state
 
-    latency_ms = (time.perf_counter() - start) * 1000
-    is_error = response.status_code >= 400
-    metrics.record_request(latency_ms, is_error)
+    def record_success(self):
+        with self._lock:
+            self._failure_count = 0
+            self._state = CBState.CLOSED
 
-    response.headers["X-Correlation-ID"] = correlation_id
+    def record_failure(self):
+        with self._lock:
+            self._failure_count += 1
+            if self._failure_count >= self.failure_threshold:
+                if self._state != CBState.OPEN:
+                    self._state = CBState.OPEN
+                    self._opened_at = time.monotonic()
+                    metrics.record_circuit_open()
+                    logger.warning(
+                        "circuit_breaker_opened",
+                        extra={"event": "circuit_breaker_opened", "correlation_id": None,
+                               "status": "warning", "details": {"service": self.name,
+                               "failures": self._failure_count}},
+                    )
 
-    logger.info(
-        "request_handled",
-        extra={
-            "event": "request_handled",
-            "correlation_id": correlation_id,
-            "status": response.status_code,
-            "details": {
-                "method": request.method,
-                "path": str(request.url.path),
-                "latency_ms": round(latency_ms, 2),
-            },
-        },
-    )
-    return response
+    def is_open(self) -> bool:
+        return self.state == CBState.OPEN
+
+    def allow_request(self) -> bool:
+        st = self.state
+        return st in (CBState.CLOSED, CBState.HALF_OPEN)
+
+
+# One CB per downstream service
+_circuit_breakers: dict[str, CircuitBreaker] = {}
+
+
+def get_cb(service_name: str) -> CircuitBreaker:
+    if service_name not in _circuit_breakers:
+        _circuit_breakers[service_name] = CircuitBreaker(service_name)
+    return _circuit_breakers[service_name]
 
 # ---------------------------------------------------------------------------
-# Resilient HTTP helper (timeout + retry + fallback)
+# Resilient HTTP (timeout + retry + circuit breaker + fallback)
 # ---------------------------------------------------------------------------
 
-TIMEOUT = 5.0  # seconds
-MAX_RETRIES = 3
-BACKOFF_BASE = 1  # seconds
+TIMEOUT      = 5.0
+MAX_RETRIES  = 3
+BACKOFF_BASE = 1
 
 
 async def resilient_request(
@@ -167,21 +237,29 @@ async def resilient_request(
     json_body: dict | None = None,
     service_name: str = "downstream",
 ) -> dict:
-    """
-    Perform an HTTP request with:
-      • 5-second timeout
-      • Up to 3 retries with exponential backoff for connection errors / 5xx
-      • Graceful fallback dict when all retries are exhausted
-    """
+    cb = get_cb(service_name)
+
+    # Circuit breaker open → fast fail
+    if not cb.allow_request():
+        logger.warning(
+            "circuit_breaker_fast_fail",
+            extra={"event": "circuit_breaker_fast_fail", "correlation_id": correlation_id,
+                   "status": "warning", "details": {"service": service_name}},
+        )
+        return {
+            "error": "Service unavailable (circuit open)",
+            "fallback": True,
+            "circuit_open": True,
+            "detail": f"{service_name} circuit breaker is OPEN",
+        }
+
     headers = {"X-Correlation-ID": correlation_id}
     last_exc: Exception | None = None
 
     for attempt in range(1, MAX_RETRIES + 1):
         try:
             async with httpx.AsyncClient(timeout=TIMEOUT) as client:
-                resp = await client.request(
-                    method, url, headers=headers, json=json_body
-                )
+                resp = await client.request(method, url, headers=headers, json=json_body)
 
             if resp.status_code >= 500:
                 raise httpx.HTTPStatusError(
@@ -189,39 +267,35 @@ async def resilient_request(
                     request=resp.request,
                     response=resp,
                 )
-
             if resp.status_code == 404:
+                cb.record_success()
                 return {"error": "Not found", "status_code": 404}
-
             if resp.status_code >= 400:
+                cb.record_success()
                 return {"error": resp.text, "status_code": resp.status_code}
 
+            cb.record_success()
             return resp.json()
 
         except (httpx.ConnectError, httpx.TimeoutException, httpx.HTTPStatusError) as exc:
             last_exc = exc
+            metrics.record_retry()
             logger.warning(
                 "http_retry",
                 extra={
-                    "event": "http_retry",
-                    "correlation_id": correlation_id,
+                    "event": "http_retry", "correlation_id": correlation_id,
                     "status": "warning",
-                    "details": {
-                        "service": service_name,
-                        "attempt": attempt,
-                        "error": str(exc),
-                    },
+                    "details": {"service": service_name, "attempt": attempt, "error": str(exc)},
                 },
             )
             if attempt < MAX_RETRIES:
                 await asyncio.sleep(BACKOFF_BASE * (2 ** (attempt - 1)))
 
-    # All retries exhausted → fallback
+    cb.record_failure()
     logger.error(
         "service_unavailable",
         extra={
-            "event": "service_unavailable",
-            "correlation_id": correlation_id,
+            "event": "service_unavailable", "correlation_id": correlation_id,
             "status": "error",
             "details": {"service": service_name, "last_error": str(last_exc)},
         },
@@ -233,20 +307,65 @@ async def resilient_request(
     }
 
 # ---------------------------------------------------------------------------
-# RabbitMQ Publisher (best-effort, non-blocking)
+# JWT Auth via auth-service
 # ---------------------------------------------------------------------------
 
-RABBITMQ_HOST = "rabbitmq"
-RABBITMQ_PORT = 5672
-RABBITMQ_QUEUE = "enrollment_notifications"
+async def _validate_jwt(token: str, correlation_id: str) -> dict:
+    """Call auth-service to validate the JWT. Returns {valid, role, sub}."""
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.post(
+                f"{AUTH_SERVICE_URL}/auth/validate",
+                json={"token": token},
+                headers={"X-Correlation-ID": correlation_id},
+            )
+        return resp.json()
+    except Exception as exc:
+        logger.error(
+            "auth_service_unreachable",
+            extra={"event": "auth_service_unreachable", "correlation_id": correlation_id,
+                   "status": "error", "details": {"error": str(exc)}},
+        )
+        raise HTTPException(status_code=503, detail="Auth service unavailable")
 
+
+def require_roles(*allowed_roles: str):
+    """FastAPI dependency: validates JWT and checks role."""
+
+    async def _dependency(request: Request) -> str:
+        auth_header = request.headers.get("Authorization", "")
+        if not auth_header.startswith("Bearer "):
+            raise HTTPException(status_code=401, detail="Missing or invalid Authorization header")
+        token = auth_header[len("Bearer "):]
+        correlation_id = getattr(request.state, "correlation_id", str(uuid.uuid4()))
+
+        result = await _validate_jwt(token, correlation_id)
+        if not result.get("valid"):
+            raise HTTPException(status_code=401, detail=f"Invalid token: {result.get('error')}")
+
+        role = result.get("role")
+        if role not in allowed_roles:
+            raise HTTPException(
+                status_code=403,
+                detail=f"Role '{role}' is not allowed. Required: {allowed_roles}",
+            )
+
+        request.state.role = role
+        request.state.sub  = result.get("sub")
+        return role
+
+    return _dependency
+
+# ---------------------------------------------------------------------------
+# RabbitMQ Publisher
+# ---------------------------------------------------------------------------
 
 def _publish_event_sync(event: dict, correlation_id: str):
-    """Publish a message to RabbitMQ (runs in a worker thread)."""
     try:
         credentials = pika.PlainCredentials("guest", "guest")
         params = pika.ConnectionParameters(
-            host=RABBITMQ_HOST, port=RABBITMQ_PORT, credentials=credentials
+            host=RABBITMQ_HOST, port=RABBITMQ_PORT, credentials=credentials,
+            connection_attempts=3, retry_delay=2,
         )
         connection = pika.BlockingConnection(params)
         channel = connection.channel()
@@ -255,100 +374,199 @@ def _publish_event_sync(event: dict, correlation_id: str):
             exchange="",
             routing_key=RABBITMQ_QUEUE,
             body=json.dumps(event),
-            properties=pika.BasicProperties(delivery_mode=2),
+            properties=pika.BasicProperties(
+                delivery_mode=2,
+                message_id=event.get("enrollment_id", str(uuid.uuid4())),  # idempotência
+                content_type="application/json",
+            ),
         )
         connection.close()
         logger.info(
             "event_published",
-            extra={
-                "event": "event_published",
-                "correlation_id": correlation_id,
-                "status": "ok",
-                "details": {"queue": RABBITMQ_QUEUE},
-            },
+            extra={"event": "event_published", "correlation_id": correlation_id,
+                   "status": "ok", "details": {"queue": RABBITMQ_QUEUE}},
         )
     except Exception as exc:
         logger.warning(
             "rabbitmq_publish_failed",
-            extra={
-                "event": "rabbitmq_publish_failed",
-                "correlation_id": correlation_id,
-                "status": "warning",
-                "details": {"error": str(exc)},
-            },
+            extra={"event": "rabbitmq_publish_failed", "correlation_id": correlation_id,
+                   "status": "warning", "details": {"error": str(exc)}},
         )
 
 
 async def publish_event(event: dict, correlation_id: str):
-    """Fire-and-forget publish in a background thread so we don't block the event loop."""
     loop = asyncio.get_running_loop()
     await loop.run_in_executor(None, _publish_event_sync, event, correlation_id)
+
+# ---------------------------------------------------------------------------
+# FastAPI App
+# ---------------------------------------------------------------------------
+
+app = FastAPI(
+    title="Middleware API — Sistema de Matrículas",
+    description="Orquestrador central com JWT, Circuit Breaker, Retry e Observabilidade",
+    version="2.0.0",
+)
+
+
+@app.middleware("http")
+async def metrics_and_correlation_middleware(request: Request, call_next):
+    start = time.perf_counter()
+    correlation_id = request.headers.get("X-Correlation-ID") or str(uuid.uuid4())
+    request.state.correlation_id = correlation_id
+
+    response: Response = await call_next(request)
+
+    latency_ms = (time.perf_counter() - start) * 1000
+    is_error = response.status_code >= 400
+    metrics.record_request(latency_ms, is_error)
+    response.headers["X-Correlation-ID"] = correlation_id
+
+    logger.info(
+        "request_handled",
+        extra={
+            "event": "request_handled", "correlation_id": correlation_id,
+            "status": response.status_code,
+            "details": {
+                "method": request.method,
+                "path": str(request.url.path),
+                "latency_ms": round(latency_ms, 2),
+            },
+        },
+    )
+    return response
 
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
 
-# -- Health ------------------------------------------------------------------
-
 @app.get("/health")
 async def health():
-    return {"status": "healthy", "service": "middleware"}
-
-
-# -- Metrics -----------------------------------------------------------------
-
-@app.get("/metrics")
-async def get_metrics():
     return {
-        "requests_total": metrics.requests_total,
-        "errors_total": metrics.errors_total,
-        "average_latency_ms": metrics.average_latency_ms,
+        "status": "healthy",
+        "service": "middleware",
+        "circuit_breakers": {
+            name: cb.state.value
+            for name, cb in _circuit_breakers.items()
+        },
     }
 
 
-# -- POST /v1/enrollments ---------------------------------------------------
+@app.get("/metrics")
+async def get_metrics(request: Request):
+    """Expõe métricas no formato Prometheus se Accept = text/plain, senão JSON."""
+    accept = request.headers.get("Accept", "")
+    if "text/plain" in accept or "application/openmetrics-text" in accept:
+        return PlainTextResponse(
+            content=metrics.to_prometheus_text(),
+            media_type="text/plain; version=0.0.4; charset=utf-8",
+        )
+    return metrics.to_json()
+
+
+# -- Auth passthrough --------------------------------------------------------
+
+@app.post("/auth/login")
+async def proxy_login(request: Request):
+    """Repassa login para o auth-service."""
+    body = await request.json()
+    correlation_id = request.state.correlation_id
+    result = await resilient_request(
+        "POST", f"{AUTH_SERVICE_URL}/auth/login", correlation_id,
+        json_body=body, service_name="auth-service",
+    )
+    if result.get("fallback"):
+        return JSONResponse(status_code=503, content=result)
+    return result
+
+
+# -- Courses -----------------------------------------------------------------
+
+@app.get("/v1/courses")
+async def list_courses(request: Request):
+    """Lista todos os cursos disponíveis (público)."""
+    correlation_id = request.state.correlation_id
+    result = await resilient_request(
+        "GET", f"{COURSE_SERVICE_URL}/courses", correlation_id,
+        service_name="course-service",
+    )
+    if result.get("fallback"):
+        return JSONResponse(status_code=503, content=result)
+    return result
+
+
+@app.get("/v1/courses/{course_id}")
+async def get_course(course_id: str, request: Request):
+    correlation_id = request.state.correlation_id
+    result = await resilient_request(
+        "GET", f"{COURSE_SERVICE_URL}/courses/{course_id}", correlation_id,
+        service_name="course-service",
+    )
+    if result.get("fallback"):
+        return JSONResponse(status_code=503, content=result)
+    if result.get("status_code") == 404:
+        raise HTTPException(status_code=404, detail=f"Course {course_id} not found")
+    return result
+
+
+@app.post("/v1/courses")
+async def create_course(
+    request: Request,
+    role: str = Depends(require_roles("admin")),
+):
+    """Cria um curso (somente admin)."""
+    body = await request.json()
+    correlation_id = request.state.correlation_id
+    result = await resilient_request(
+        "POST", f"{COURSE_SERVICE_URL}/courses", correlation_id,
+        json_body=body, service_name="course-service",
+    )
+    if result.get("fallback"):
+        return JSONResponse(status_code=503, content=result)
+    return JSONResponse(status_code=201, content=result)
+
+
+# -- Enrollments -------------------------------------------------------------
 
 @app.post("/v1/enrollments")
 async def create_enrollment(
     request: Request,
     role: str = Depends(require_roles("student", "admin")),
 ):
-    correlation_id: str = request.state.correlation_id
+    correlation_id = request.state.correlation_id
     body = await request.json()
     student_id = body.get("student_id")
-    course_id = body.get("course_id")
+    course_id  = body.get("course_id")
 
     if not student_id or not course_id:
-        raise HTTPException(
-            status_code=400, detail="student_id and course_id are required"
-        )
+        raise HTTPException(status_code=400, detail="student_id and course_id are required")
 
-    # 1. Verify course exists via course-service
-    course_url = f"http://course-service:8000/courses/{course_id}"
+    # 1. Verificar curso via course-service
     course_result = await resilient_request(
-        "GET", course_url, correlation_id, service_name="course-service"
+        "GET", f"{COURSE_SERVICE_URL}/courses/{course_id}", correlation_id,
+        service_name="course-service",
     )
     if course_result.get("fallback"):
         return JSONResponse(status_code=503, content=course_result)
     if course_result.get("status_code") == 404:
         raise HTTPException(status_code=404, detail=f"Course {course_id} not found")
+    if not course_result.get("available", True):
+        raise HTTPException(status_code=409, detail=f"Course {course_id} is not available")
 
-    # 2. Create enrollment via enrollment-service
-    enrollment_url = "http://enrollment-service:8000/enrollments"
-    enrollment_payload = {"student_id": student_id, "course_id": course_id}
+    # 2. Criar matrícula via enrollment-service
     enrollment_result = await resilient_request(
-        "POST",
-        enrollment_url,
-        correlation_id,
-        json_body=enrollment_payload,
+        "POST", f"{ENROLLMENT_SERVICE_URL}/enrollments", correlation_id,
+        json_body={"student_id": student_id, "course_id": course_id},
         service_name="enrollment-service",
     )
     if enrollment_result.get("fallback"):
         return JSONResponse(status_code=503, content=enrollment_result)
+    if enrollment_result.get("status_code") == 409:
+        raise HTTPException(status_code=409, detail="Student already enrolled in this course")
 
-    enrollment_id = enrollment_result.get("id", enrollment_result.get("enrollment_id", str(uuid.uuid4())))
+    enrollment_id = enrollment_result.get("id", str(uuid.uuid4()))
 
-    # 3. Publish event (best-effort)
+    # 3. Publicar evento (fire-and-forget — tolerância a falha do notification-worker)
     event = {
         "event": "enrollment.created",
         "student_id": student_id,
@@ -358,46 +576,60 @@ async def create_enrollment(
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
     await publish_event(event, correlation_id)
+    metrics.record_enrollment()
 
     logger.info(
         "enrollment_created",
         extra={
-            "event": "enrollment_created",
-            "correlation_id": correlation_id,
+            "event": "enrollment_created", "correlation_id": correlation_id,
             "status": "ok",
-            "details": {
-                "student_id": student_id,
-                "course_id": course_id,
-                "enrollment_id": enrollment_id,
-            },
+            "details": {"student_id": student_id, "course_id": course_id,
+                        "enrollment_id": enrollment_id},
         },
     )
 
-    return {
-        "message": "Enrollment created successfully",
-        "enrollment": {
-            "enrollment_id": enrollment_id,
-            "student_id": student_id,
-            "course_id": course_id,
+    return JSONResponse(
+        status_code=201,
+        content={
+            "message": "Enrollment created successfully",
+            "enrollment": {
+                "enrollment_id": enrollment_id,
+                "student_id": student_id,
+                "course_id": course_id,
+            },
+            "correlation_id": correlation_id,
         },
-        "correlation_id": correlation_id,
-    }
+    )
 
 
-# -- GET /v1/admin/enrollments ----------------------------------------------
-
-@app.get("/v1/admin/enrollments")
+@app.get("/v1/enrollments")
 async def list_enrollments(
     request: Request,
     role: str = Depends(require_roles("admin")),
 ):
-    correlation_id: str = request.state.correlation_id
-
-    enrollment_url = "http://enrollment-service:8000/enrollments"
+    correlation_id = request.state.correlation_id
     result = await resilient_request(
-        "GET", enrollment_url, correlation_id, service_name="enrollment-service"
+        "GET", f"{ENROLLMENT_SERVICE_URL}/enrollments", correlation_id,
+        service_name="enrollment-service",
     )
     if result.get("fallback"):
         return JSONResponse(status_code=503, content=result)
-
     return {"enrollments": result, "correlation_id": correlation_id}
+
+
+@app.get("/v1/enrollments/{enrollment_id}")
+async def get_enrollment(
+    enrollment_id: str,
+    request: Request,
+    role: str = Depends(require_roles("student", "admin")),
+):
+    correlation_id = request.state.correlation_id
+    result = await resilient_request(
+        "GET", f"{ENROLLMENT_SERVICE_URL}/enrollments/{enrollment_id}", correlation_id,
+        service_name="enrollment-service",
+    )
+    if result.get("fallback"):
+        return JSONResponse(status_code=503, content=result)
+    if result.get("status_code") == 404:
+        raise HTTPException(status_code=404, detail="Enrollment not found")
+    return result

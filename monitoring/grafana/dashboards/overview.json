@@ -1,0 +1,182 @@
+{
+  "id": null,
+  "title": "Sistema de Matrículas — Overview",
+  "tags": ["matriculas", "middleware"],
+  "timezone": "browser",
+  "refresh": "10s",
+  "schemaVersion": 36,
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Total de Requisições (Middleware)",
+      "gridPos": { "x": 0, "y": 0, "w": 6, "h": 4 },
+      "targets": [
+        {
+          "expr": "middleware_requests_total",
+          "legendFormat": "Requests"
+        }
+      ],
+      "options": { "colorMode": "background", "graphMode": "area" },
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "thresholds" },
+          "thresholds": { "steps": [
+            { "color": "green", "value": null },
+            { "color": "yellow", "value": 100 },
+            { "color": "red", "value": 500 }
+          ]}
+        }
+      }
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Erros Totais (Middleware)",
+      "gridPos": { "x": 6, "y": 0, "w": 6, "h": 4 },
+      "targets": [
+        { "expr": "middleware_errors_total", "legendFormat": "Erros" }
+      ],
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "thresholds" },
+          "thresholds": { "steps": [
+            { "color": "green", "value": null },
+            { "color": "red", "value": 1 }
+          ]}
+        }
+      }
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Matrículas Criadas",
+      "gridPos": { "x": 12, "y": 0, "w": 6, "h": 4 },
+      "targets": [
+        { "expr": "middleware_enrollments_created_total", "legendFormat": "Matrículas" }
+      ],
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "thresholds" },
+          "thresholds": { "steps": [
+            { "color": "blue", "value": null }
+          ]}
+        }
+      }
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Circuit Breaker Aberto (vezes)",
+      "gridPos": { "x": 18, "y": 0, "w": 6, "h": 4 },
+      "targets": [
+        { "expr": "middleware_circuit_breaker_open_total", "legendFormat": "CB Open" }
+      ],
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "thresholds" },
+          "thresholds": { "steps": [
+            { "color": "green", "value": null },
+            { "color": "red", "value": 1 }
+          ]}
+        }
+      }
+    },
+    {
+      "id": 5,
+      "type": "gauge",
+      "title": "Latência Média — Middleware (ms)",
+      "gridPos": { "x": 0, "y": 4, "w": 8, "h": 6 },
+      "targets": [
+        { "expr": "middleware_average_latency_ms", "legendFormat": "Latência média" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "min": 0, "max": 2000,
+          "thresholds": { "steps": [
+            { "color": "green", "value": null },
+            { "color": "yellow", "value": 200 },
+            { "color": "red", "value": 1000 }
+          ]}
+        }
+      }
+    },
+    {
+      "id": 6,
+      "type": "gauge",
+      "title": "Latência Média — Course Service (ms)",
+      "gridPos": { "x": 8, "y": 4, "w": 8, "h": 6 },
+      "targets": [
+        { "expr": "course_service_avg_latency_ms", "legendFormat": "Latência" }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "ms", "min": 0, "max": 2000,
+          "thresholds": { "steps": [
+            { "color": "green", "value": null },
+            { "color": "yellow", "value": 200 },
+            { "color": "red", "value": 1000 }
+          ]}
+        }
+      }
+    },
+    {
+      "id": 7,
+      "type": "gauge",
+      "title": "Latência Média — Enrollment Service (ms)",
+      "gridPos": { "x": 16, "y": 4, "w": 8, "h": 6 },
+      "targets": [
+        { "expr": "enrollment_service_avg_latency_ms", "legendFormat": "Latência" }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "ms", "min": 0, "max": 2000,
+          "thresholds": { "steps": [
+            { "color": "green", "value": null },
+            { "color": "yellow", "value": 200 },
+            { "color": "red", "value": 1000 }
+          ]}
+        }
+      }
+    },
+    {
+      "id": 8,
+      "type": "stat",
+      "title": "Retries Totais",
+      "gridPos": { "x": 0, "y": 10, "w": 6, "h": 4 },
+      "targets": [
+        { "expr": "middleware_retries_total", "legendFormat": "Retries" }
+      ]
+    },
+    {
+      "id": 9,
+      "type": "stat",
+      "title": "Cursos Cadastrados",
+      "gridPos": { "x": 6, "y": 10, "w": 6, "h": 4 },
+      "targets": [
+        { "expr": "course_service_courses_total", "legendFormat": "Cursos" }
+      ]
+    },
+    {
+      "id": 10,
+      "type": "stat",
+      "title": "Matrículas Armazenadas",
+      "gridPos": { "x": 12, "y": 10, "w": 6, "h": 4 },
+      "targets": [
+        { "expr": "enrollment_service_enrollments_total", "legendFormat": "Matrículas" }
+      ]
+    },
+    {
+      "id": 11,
+      "type": "stat",
+      "title": "Duplicatas Rejeitadas",
+      "gridPos": { "x": 18, "y": 10, "w": 6, "h": 4 },
+      "targets": [
+        { "expr": "enrollment_service_duplicates_rejected_total", "legendFormat": "Duplicatas" }
+      ],
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "thresholds" },
+          "thresholds": { "steps": [
+            { "color": "green", "value": null },
+            { "color": "orange", "value": 1 }
+          ]}
+        }
+      }
+    }
+  ]
+}

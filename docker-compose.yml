@@ -1,45 +1,138 @@
+networks:
+  backend:
+    driver: bridge
+
 services:
-  middleware:
-    build: ./middleware
+
+  # ─── Auth Service ──────────────────────────────────────────────────────────
+  auth-service:
+    build: ./services/auth-service
+    container_name: auth-service
     ports:
-      - "8000:8000"
-    depends_on:
-      rabbitmq:
-        condition: service_healthy
-      course-service:
-        condition: service_started
-      enrollment-service:
-        condition: service_started
+      - "8003:8000"
+    networks:
+      - backend
     environment:
-      - COURSE_SERVICE_URL=http://course-service:8000
-      - ENROLLMENT_SERVICE_URL=http://enrollment-service:8000
-      - RABBITMQ_HOST=rabbitmq
-
-  course-service:
-    build: ./services/course-service
-    ports:
-      - "8001:8000"
-
-  enrollment-service:
-    build: ./services/enrollment-service
-    ports:
-      - "8002:8000"
-
-  rabbitmq:
-    image: rabbitmq:3-management
-    ports:
-      - "5672:5672"
-      - "15672:15672"
+      - JWT_SECRET=super-secret-jwt-key-change-in-production
     healthcheck:
-      test: rabbitmq-diagnostics -q ping
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
       interval: 10s
       timeout: 5s
       retries: 5
 
+  # ─── Course Service ────────────────────────────────────────────────────────
+  course-service:
+    build: ./services/course-service
+    container_name: course-service
+    ports:
+      - "8001:8000"
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ─── Enrollment Service ────────────────────────────────────────────────────
+  enrollment-service:
+    build: ./services/enrollment-service
+    container_name: enrollment-service
+    ports:
+      - "8002:8000"
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ─── Middleware / API Gateway ──────────────────────────────────────────────
+  middleware:
+    build: ./middleware
+    container_name: middleware
+    ports:
+      - "8000:8000"
+    networks:
+      - backend
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      auth-service:
+        condition: service_healthy
+      course-service:
+        condition: service_healthy
+      enrollment-service:
+        condition: service_healthy
+    environment:
+      - AUTH_SERVICE_URL=http://auth-service:8000
+      - COURSE_SERVICE_URL=http://course-service:8000
+      - ENROLLMENT_SERVICE_URL=http://enrollment-service:8000
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
+      - JWT_SECRET=super-secret-jwt-key-change-in-production
+
+  # ─── RabbitMQ ──────────────────────────────────────────────────────────────
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: rabbitmq
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    networks:
+      - backend
+    healthcheck:
+      test: rabbitmq-diagnostics -q ping
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    environment:
+      - RABBITMQ_DEFAULT_USER=guest
+      - RABBITMQ_DEFAULT_PASS=guest
+
+  # ─── Notification Worker ───────────────────────────────────────────────────
   notification-worker:
     build: ./services/notification-worker
+    container_name: notification-worker
+    networks:
+      - backend
     depends_on:
       rabbitmq:
         condition: service_healthy
     environment:
       - RABBITMQ_HOST=rabbitmq
+
+  # ─── Prometheus ────────────────────────────────────────────────────────────
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    ports:
+      - "9090:9090"
+    networks:
+      - backend
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.retention.time=7d"
+    depends_on:
+      - middleware
+
+  # ─── Grafana ───────────────────────────────────────────────────────────────
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    ports:
+      - "3000:3000"
+    networks:
+      - backend
+    volumes:
+      - ./monitoring/grafana/datasources:/etc/grafana/provisioning/datasources:ro
+      - ./monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+    depends_on:
+      - prometheus
