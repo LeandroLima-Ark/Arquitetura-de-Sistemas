@@ -111,9 +111,7 @@ docker compose down
 curl -X POST http://localhost:8000/auth/login -H "Content-Type: application/json" -d "{\"username\":\"aluno\",\"password\":\"senha123\"}"
 
 # Login como admin
-curl -X POST http://localhost:8000/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{"username": "admin", "password": "admin123"}'
+curl -X POST http://localhost:8000/auth/login -H "Content-Type: application/json" -d "{\"username\": \"admin\", \"password\": \"admin123\"}"
 ```
 
 **Resposta:**
