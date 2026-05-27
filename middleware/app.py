@@ -492,7 +492,7 @@ async def list_courses(request: Request):
         "GET", f"{COURSE_SERVICE_URL}/courses", correlation_id,
         service_name="course-service",
     )
-    if result.get("fallback"):
+    if isinstance(result, dict) and result.get("fallback"):
         return JSONResponse(status_code=503, content=result)
     return result
 
@@ -614,7 +614,7 @@ async def list_enrollments(
         "GET", f"{ENROLLMENT_SERVICE_URL}/enrollments", correlation_id,
         service_name="enrollment-service",
     )
-    if result.get("fallback"):
+    if isinstance(result, dict) and result.get("fallback"):
         return JSONResponse(status_code=503, content=result)
     return {"enrollments": result, "correlation_id": correlation_id}
 

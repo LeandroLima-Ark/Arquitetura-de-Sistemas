@@ -108,9 +108,7 @@ docker compose down
 
 ```bash
 # Login como aluno
-curl -X POST http://localhost:8000/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{"username": "aluno", "password": "senha123"}'
+curl -X POST http://localhost:8000/auth/login -H "Content-Type: application/json" -d "{\"username\":\"aluno\",\"password\":\"senha123\"}"
 
 # Login como admin
 curl -X POST http://localhost:8000/auth/login \
@@ -146,25 +144,17 @@ curl -X POST http://localhost:8000/auth/login \
 curl http://localhost:8000/v1/courses
 
 # Realizar matrícula (student ou admin)
-curl -X POST http://localhost:8000/v1/enrollments \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer <TOKEN>" \
-  -H "X-Correlation-ID: meu-request-001" \
-  -d '{"student_id": "aluno-01", "course_id": "c1"}'
+curl -X POST http://localhost:8000/v1/enrollments -H "Content-Type: application/json" -H "Authorization: Bearer <SEU TOKEN>" -H "X-Correlation-ID: meu-request-001" -d "{\"student_id\": \"aluno-01\", \"course_id\": \"c1\"}"
 
 # Listar matrículas (apenas admin)
-curl http://localhost:8000/v1/enrollments \
-  -H "Authorization: Bearer <ADMIN_TOKEN>"
+curl http://localhost:8000/v1/enrollments -H "Authorization: Bearer <ADMIN_TOKEN>"
 ```
 
 ### Administração de Cursos (admin)
 
 ```bash
 # Criar novo curso
-curl -X POST http://localhost:8000/v1/courses \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer <ADMIN_TOKEN>" \
-  -d '{"name": "Cloud Computing", "description": "AWS/GCP/Azure", "max_students": 25}'
+curl -X POST http://localhost:8000/v1/courses -H "Content-Type: application/json" -H "Authorization: Bearer <ADMIN_TOKEN>" -d "{\"name\": \"Cloud Computing\", \"description\": \"AWS/GCP/Azure\", \"max_students\": 25}"
 ```
 
 ### Health & Métricas
@@ -196,11 +186,7 @@ curl http://localhost:8003/health   # auth-service
 docker compose stop course-service
 
 # 2. Tentar matrícula — middleware fará 3 retries, depois abre o Circuit Breaker
-curl -X POST http://localhost:8000/v1/enrollments \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer <TOKEN>" \
-  -d '{"student_id": "aluno-01", "course_id": "c1"}'
-# → 503 com {"error": "Service unavailable", "fallback": true}
+curl -X POST http://localhost:8000/v1/enrollments -H "Content-Type: application/json" -H "Authorization: Bearer <TOKEN>" -d "{\"student_id\": \"aluno-01\", \"course_id\": \"c1\"}"
 
 # 3. Ver estado do circuit breaker
 curl http://localhost:8000/health
@@ -217,11 +203,7 @@ docker compose start course-service
 docker compose stop notification-worker
 
 # 2. Fazer matrícula — FUNCIONA NORMALMENTE (desacoplado)
-curl -X POST http://localhost:8000/v1/enrollments \
-  -H "Authorization: Bearer <TOKEN>" \
-  -H "Content-Type: application/json" \
-  -d '{"student_id": "aluno-01", "course_id": "c2"}'
-# → 201 Created (matrícula criada; evento fica na fila)
+curl -X POST http://localhost:8000/v1/enrollments -H "Authorization: Bearer <TOKEN>" -H "Content-Type: application/json" -d "{\"student_id\": \"aluno-01\", \"course_id\": \"c2\"}"
 
 # 3. Ver mensagens na fila: http://localhost:15672 (guest/guest)
 
@@ -233,17 +215,9 @@ docker compose start notification-worker
 
 ```bash
 # Mesma matrícula duas vezes
-curl -X POST http://localhost:8000/v1/enrollments \
-  -H "Authorization: Bearer <TOKEN>" \
-  -H "Content-Type: application/json" \
-  -d '{"student_id": "aluno-01", "course_id": "c1"}'
-# → 201 Created (primeira vez)
+curl -X POST http://localhost:8000/v1/enrollments -H "Authorization: Bearer <TOKEN>" -H "Content-Type: application/json" -d "{\"student_id\": \"aluno-01\", \"course_id\": \"c1\"}"
 
-curl -X POST http://localhost:8000/v1/enrollments \
-  -H "Authorization: Bearer <TOKEN>" \
-  -H "Content-Type: application/json" \
-  -d '{"student_id": "aluno-01", "course_id": "c1"}'
-# → 409 Conflict (segunda vez — idempotência aplicada)
+curl -X POST http://localhost:8000/v1/enrollments -H "Authorization: Bearer <TOKEN>" -H "Content-Type: application/json" -d "{\"student_id\": \"aluno-01\", \"course_id\": \"c1\"}"
 ```
 
 ---
