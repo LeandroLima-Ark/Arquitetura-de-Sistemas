@@ -138,15 +138,12 @@ Quando todas as tentativas de retry se esgotam, o sistema **não retorna um erro
 
 **Como testar:**
 
-```bash
+```cmd
 # Parar o Course Service
 docker compose stop course-service
 
 # Tentar criar uma matrícula
-curl -X POST http://localhost:8000/v1/enrollments \
-  -H "Authorization: Bearer <token>" \
-  -H "Content-Type: application/json" \
-  -d '{"student_id": "STU001", "course_id": "CS101"}'
+curl -X POST http://localhost:8000/v1/enrollments -H "Authorization: Bearer <token>" -H "Content-Type: application/json" -d "{\"student_id\": \"STU001\", \"course_id\": \"CS101\"}"
 
 # Verificar a resposta de fallback (HTTP 503)
 
@@ -186,15 +183,12 @@ docker compose start course-service
 
 **Como testar:**
 
-```bash
+```cmd
 # Parar o Enrollment Service
 docker compose stop enrollment-service
 
 # Tentar criar uma matrícula
-curl -X POST http://localhost:8000/v1/enrollments \
-  -H "Authorization: Bearer <token>" \
-  -H "Content-Type: application/json" \
-  -d '{"student_id": "STU001", "course_id": "CS101"}'
+curl -X POST http://localhost:8000/v1/enrollments -H "Authorization: Bearer <token>" -H "Content-Type: application/json" -d "{\"student_id\": \"STU001\", \"course_id\": \"CS101\"}"
 
 # Verificar a resposta de fallback (HTTP 503)
 
@@ -245,15 +239,12 @@ WARNING: Falha ao publicar evento enrollment.created no RabbitMQ. Correlation ID
 
 **Como testar:**
 
-```bash
+```cmd
 # Parar o RabbitMQ
 docker compose stop rabbitmq
 
 # Criar uma matrícula (deve funcionar normalmente)
-curl -X POST http://localhost:8000/v1/enrollments \
-  -H "Authorization: Bearer <token>" \
-  -H "Content-Type: application/json" \
-  -d '{"student_id": "STU001", "course_id": "CS101"}'
+curl -X POST http://localhost:8000/v1/enrollments -H "Authorization: Bearer <token>" -H "Content-Type: application/json" -d "{\"student_id\": \"STU001\", \"course_id\": \"CS101\"}"
 
 # Verificar que a matrícula foi criada (HTTP 201)
 
@@ -311,7 +302,7 @@ O sistema adota um modelo de **consistência eventual** para o subsistema de not
 
 ### Comandos Rápidos
 
-```bash
+```cmd
 # === Testar falha do Course Service ===
 docker compose stop course-service
 # Fazer requisição e observar fallback
