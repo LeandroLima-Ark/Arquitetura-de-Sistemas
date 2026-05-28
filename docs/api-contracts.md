@@ -40,7 +40,7 @@ Verifica o estado de saúde do Middleware API.
 
 **Exemplo de Requisição:**
 
-```bash
+```cmd
 curl -X GET http://localhost:8000/health
 ```
 
@@ -68,7 +68,7 @@ Retorna métricas e estatísticas do sistema.
 
 **Exemplo de Requisição:**
 
-```bash
+```cmd
 curl -X GET http://localhost:8000/metrics
 ```
 
@@ -121,15 +121,8 @@ Cria uma nova matrícula para um aluno em um curso.
 
 **Exemplo de Requisição:**
 
-```bash
-curl -X POST http://localhost:8000/v1/enrollments \
-  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..." \
-  -H "Content-Type: application/json" \
-  -H "X-Correlation-ID: req-12345" \
-  -d '{
-    "student_id": "STU001",
-    "course_id": "CS101"
-  }'
+```cmd
+curl -X POST http://localhost:8000/v1/enrollments -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..." -H "Content-Type: application/json" -H "X-Correlation-ID: req-12345" -d "{\"student_id\": \"STU001\", \"course_id\": \"CS101\"}"
 ```
 
 **Resposta de Sucesso (201 Created):**
@@ -211,10 +204,8 @@ Lista todas as matrículas registradas no sistema. Restrito a administradores.
 
 **Exemplo de Requisição:**
 
-```bash
-curl -X GET http://localhost:8000/v1/admin/enrollments \
-  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..." \
-  -H "X-Correlation-ID: req-67890"
+```cmd
+curl -X GET http://localhost:8000/v1/admin/enrollments -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..." -H "X-Correlation-ID: req-67890"
 ```
 
 **Resposta de Sucesso (200 OK):**
@@ -291,7 +282,7 @@ Verifica o estado de saúde do Course Service.
 
 **Exemplo de Requisição:**
 
-```bash
+```cmd
 curl -X GET http://localhost:8001/health
 ```
 
@@ -324,9 +315,8 @@ Retorna os detalhes de um curso específico pelo seu ID.
 
 **Exemplo de Requisição:**
 
-```bash
-curl -X GET http://localhost:8001/courses/CS101 \
-  -H "X-Correlation-ID: req-12345"
+```cmd
+curl -X GET http://localhost:8001/courses/CS101 -H "X-Correlation-ID: req-12345"
 ```
 
 **Resposta de Sucesso (200 OK):**
@@ -373,7 +363,7 @@ Verifica o estado de saúde do Enrollment Service.
 
 **Exemplo de Requisição:**
 
-```bash
+```cmd
 curl -X GET http://localhost:8002/health
 ```
 
@@ -415,14 +405,8 @@ Cria um novo registro de matrícula.
 
 **Exemplo de Requisição:**
 
-```bash
-curl -X POST http://localhost:8002/enrollments \
-  -H "Content-Type: application/json" \
-  -H "X-Correlation-ID: req-12345" \
-  -d '{
-    "student_id": "STU001",
-    "course_id": "CS101"
-  }'
+```cmd
+curl -X POST http://localhost:8002/enrollments -H "Content-Type: application/json" -H "X-Correlation-ID: req-12345" -d "{\"student_id\": \"STU001\", \"course_id\": \"CS101\"}"
 ```
 
 **Resposta de Sucesso (201 Created):**
@@ -460,9 +444,8 @@ Lista todas as matrículas registradas.
 
 **Exemplo de Requisição:**
 
-```bash
-curl -X GET http://localhost:8002/enrollments \
-  -H "X-Correlation-ID: req-67890"
+```cmd
+curl -X GET http://localhost:8002/enrollments -H "X-Correlation-ID: req-67890"
 ```
 
 **Resposta de Sucesso (200 OK):**
