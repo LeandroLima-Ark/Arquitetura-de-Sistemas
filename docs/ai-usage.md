@@ -1,174 +1,135 @@
 # Uso de Inteligência Artificial
 
-> **⚠️ NOTA IMPORTANTE:** Este documento é um **modelo (template)** que deve ser preenchido pelo aluno com informações reais sobre o uso de ferramentas de IA durante o desenvolvimento do projeto. Preencha cada seção com detalhes específicos sobre sua experiência.
+> **⚠️ NOTA IMPORTANTE:** Este documento reflete o uso real de ferramentas de IA (assistentes virtuais baseados em LLM) durante o desenvolvimento e depuração da arquitetura distribuída do Sistema de Matrículas.
 
 ---
 
 ## 1. Ferramentas de IA Utilizadas
 
-Liste todas as ferramentas de IA que foram utilizadas durante o desenvolvimento do projeto.
-
 | Ferramenta | Versão/Modelo | Finalidade Principal |
 |------------|---------------|----------------------|
-| *Ex.: ChatGPT* | *GPT-4o* | *Geração de código e debugging* |
-| *Ex.: GitHub Copilot* | *v1.x* | *Autocompletar código* |
-| *Ex.: Claude* | *3.5 Sonnet* | *Revisão de arquitetura* |
-| | | |
-| | | |
-| | | |
+| *Gemini Assistant (Antigravity)* | *Gemini / Google DeepMind* | *Resolução de bugs complexos, desenvolvimento de resiliência (Circuit Breaker), ajustes de infraestrutura Docker e documentação.* |
 
 ---
 
 ## 2. Onde as Ferramentas Foram Utilizadas
 
-Descreva em quais partes do projeto as ferramentas de IA foram aplicadas.
-
 ### 2.1 Arquitetura e Design
 
-- [ ] Definição da arquitetura do sistema
-- [ ] Escolha de padrões de comunicação (síncrono/assíncrono)
-- [ ] Design dos contratos de API
-- [ ] Estratégia de tolerância a falhas
+- [x] Definição da arquitetura do sistema
+- [x] Escolha de padrões de comunicação (síncrono/assíncrono)
+- [x] Design dos contratos de API
+- [x] Estratégia de tolerância a falhas
 
 **Detalhes:**
-
-> *Descreva como a IA auxiliou nas decisões de arquitetura...*
+A IA foi utilizada para estruturar a topologia da rede no Docker Compose, validando a integração entre a comunicação síncrona (REST) e assíncrona (RabbitMQ), garantindo que a proposta arquitetural atendesse aos requisitos obrigatórios do trabalho.
 
 ### 2.2 Implementação de Código
 
-- [ ] Middleware API (gateway, autenticação, resiliência)
-- [ ] Course Service
-- [ ] Enrollment Service
-- [ ] Notification Worker
-- [ ] Configuração do Docker Compose
+- [x] Middleware API (gateway, autenticação, resiliência)
+- [x] Course Service
+- [x] Enrollment Service
+- [x] Notification Worker
+- [x] Configuração do Docker Compose
 
 **Detalhes:**
-
-> *Descreva quais partes do código foram geradas/assistidas por IA...*
+A IA gerou e refinou a lógica de resiliência no `middleware/app.py`, especificamente o Wrapper de requisições `resilient_request` com suporte a Timeout, Exponential Backoff Retry e Circuit Breaker. Também auxiliou no alinhamento das variáveis de ambiente no Docker Compose.
 
 ### 2.3 Testes e Debugging
 
 - [ ] Identificação de bugs
 - [ ] Escrita de testes
-- [ ] Testes de tolerância a falhas
-- [ ] Validação dos contratos de API
+- [x] Testes de tolerância a falhas
+- [x] Validação dos contratos de API
 
 **Detalhes:**
-
-> *Descreva como a IA auxiliou nos testes e debugging...*
+O uso mais intensivo da IA ocorreu na depuração (debugging) de problemas reais que surgiram:
+1. Resolução de um **deadlock** causado pelo uso re-entrante de um `threading.Lock()` no endpoint do Prometheus.
+2. Identificação de divergência nas chaves secretas do JWT (`JWT_SECRET`) entre o Auth Service e o Middleware.
+3. Correção de um erro `AttributeError` quando o middleware recebia uma lista em vez de um dicionário na listagem de cursos.
 
 ### 2.4 Documentação
 
-- [ ] Geração de documentação técnica
+- [x] Geração de documentação técnica
 - [ ] Diagramas e fluxogramas
-- [ ] README do projeto
-- [ ] Comentários no código
+- [x] README do projeto
+- [x] Comentários no código
 
 **Detalhes:**
-
-> *Descreva como a IA auxiliou na documentação...*
+A IA gerou um guia prático de apresentação (`guia_apresentacao.md`) detalhando como demonstrar cada aspecto do trabalho e adaptou comandos `curl` da documentação de Linux (bash) para Windows (CMD), permitindo a correta execução dos testes pelo grupo.
 
 ---
 
 ## 3. Principais Prompts Utilizados
 
-Liste os prompts mais significativos que foram enviados às ferramentas de IA, junto com o contexto e o resultado obtido.
-
 ### Prompt 1
 
-**Ferramenta:** *[Nome da ferramenta]*
-
-**Contexto:** *[O que você estava tentando fazer]*
+**Ferramenta:** *Gemini Assistant*
+**Contexto:** *Investigação de falha silenciosa onde os containers subiam mas o health check não finalizava e o endpoint ficava carregando infinitamente.*
 
 **Prompt:**
+> *"o container do Docker não responde como Healthy, ele fica carregando infinitamente. rodei novamente, e o problema continuou o mesmo"*
 
-> *Cole aqui o prompt utilizado...*
-
-**Resultado:** *[Descreva brevemente o que a IA retornou e se foi útil]*
+**Resultado:** A IA analisou os logs do Docker e o código do `app.py`, identificando um erro clássico de concorrência: um **Deadlock** no endpoint `/metrics` causado pela tentativa de adquirir um lock que já estava em uso pela mesma thread no método de cálculo de média de latência. A IA reescreveu a função retirando a chamada conflitante e resolvendo o congelamento instantaneamente.
 
 ---
 
 ### Prompt 2
 
-**Ferramenta:** *[Nome da ferramenta]*
-
-**Contexto:** *[O que você estava tentando fazer]*
+**Ferramenta:** *Gemini Assistant*
+**Contexto:** *Dificuldade para executar os comandos de teste da API no ambiente Windows.*
 
 **Prompt:**
+> *"Internal Server Errorcurl: (3) URL rejected: Bad hostname (...) quero esse comando pro cmd do windows"*
 
-> *Cole aqui o prompt utilizado...*
-
-**Resultado:** *[Descreva brevemente o que a IA retornou e se foi útil]*
+**Resultado:** A IA explicou a diferença no tratamento de quebra de linhas (`\` no bash vs `^` no CMD) e no escape de aspas em JSON. auxiliando na adaptação de todos os arquivos Markdown da pasta `docs/` contendo comandos `curl` para o formato de linha única suportado pelo Windows CMD.
 
 ---
 
 ### Prompt 3
 
-**Ferramenta:** *[Nome da ferramenta]*
-
-**Contexto:** *[O que você estava tentando fazer]*
+**Ferramenta:** *Gemini Assistant*
+**Contexto:** *Dificuldade para identificar a causa de um erro 500 (Internal Server Error) ao tentar listar os cursos através do middleware, mesmo com todos os containers rodando normalmente e sem erros aparentes na compilação.*
 
 **Prompt:**
+> *"curl http://localhost:8000/v1/courses - Internal Server Error (...) O que pode estar acontecendo? Como descubro o erro?"*
 
-> *Cole aqui o prompt utilizado...*
-
-**Resultado:** *[Descreva brevemente o que a IA retornou e se foi útil]*
-
----
-
-*(Adicione mais prompts conforme necessário)*
+**Resultado:** A IA instruiu o uso do comando `docker compose logs middleware course-service --tail 30` para rastrear o erro interno. A partir dos logs, identificou um `AttributeError: 'list' object has no attribute 'get'` na linha 495. Explicou que ocorreu uma falha de tipagem na integração: o `course-service` retornava uma lista `[]`, mas o middleware tentava acessar um dicionário usando `.get()`. Isso ajudou a compreender a importância de validar os tipos de dados que trafegam entre microsserviços diferentes.
 
 ---
 
 ## 4. Validação dos Outputs
 
-Descreva como os outputs gerados pelas ferramentas de IA foram validados e verificados antes de serem incorporados ao projeto.
-
 ### 4.1 Processo de Validação
 
 | Etapa | Descrição |
 |-------|-----------|
-| Revisão manual | *Descreva como o código gerado foi revisado manualmente...* |
-| Testes funcionais | *Descreva como o código foi testado funcionalmente...* |
-| Comparação com documentação | *Descreva como o output foi comparado com documentações oficiais...* |
-| Iterações | *Descreva quantas iterações foram necessárias para chegar ao resultado final...* |
+| Revisão manual | O código gerado (especialmente a resolução do deadlock e o circuit breaker) foi lido para compreender a mecânica de concorrência e falha. |
+| Testes funcionais | Cada correção e comando gerado foi validado no terminal com `docker compose build` e chamadas `curl` reais para observar os retornos (ex: código HTTP 503 no fallback). |
+| Comparação com documentação | O guia de apresentação gerado pela IA foi verificado contra o edital original do trabalho para garantir que cobria 100% dos requisitos. |
+| Iterações | A depuração do erro de carregamento infinito exigiu múltiplas interações: primeiro verificação do JWT, versão do bcrypt, até encontrar a causa raiz nos logs (Deadlock). |
 
 ### 4.2 Modificações Realizadas
 
-Descreva as principais modificações que foram feitas nos outputs gerados pela IA:
-
-> *Exemplo: "O código gerado pela IA para o mecanismo de retry não incluía backoff exponencial. Adicionei manualmente a lógica de backoff com intervalos de 1s, 2s e 4s."*
-
-1. *Modificação 1...*
-2. *Modificação 2...*
-3. *Modificação 3...*
+As principais modificações feitas em conjunto com a IA a partir do código original foram:
+1. Adequação de tipos de retorno no Python (tratar `list` em vez de `dict`) usando `isinstance()`.
+2. Fixação da versão da biblioteca `bcrypt==4.0.1` no `requirements.txt` para resolver incompatibilidade com a dependência `passlib`.
+3. Unificação das variáveis de ambiente para a chave JWT_SECRET.
 
 ### 4.3 Problemas Encontrados
 
-Liste problemas ou incorreções nos outputs da IA que foram identificados durante a validação:
-
-> *Exemplo: "A IA gerou um Dockerfile que não incluía o COPY do requirements.txt antes do pip install, causando problemas de cache do Docker."*
-
-1. *Problema 1...*
-2. *Problema 2...*
-3. *Problema 3...*
+Erros de sintaxe ou de lógica gerados temporariamente durante o uso da IA:
+1. O envio inicial de comandos `curl` formatados com `\` (padrão Unix), que resultaram em erro de "Bad hostname" ao serem colados diretamente no Windows CMD, necessitando de uma readequação completa da documentação para o ambiente de desenvolvimento local.
 
 ---
 
 ## 5. Reflexão
 
 ### 5.1 Benefícios Observados
-
-> *Descreva os principais benefícios de usar IA no desenvolvimento deste projeto...*
+O uso da IA como "Pair Programmer" acelerou drasticamente a fase de depuração (debugging). Erros silenciosos como Deadlocks e travamentos em chamadas de rede são historicamente difíceis de encontrar manualmente. A capacidade da IA de analisar milhares de linhas de log do Docker em segundos e apontar a linha exata no código economizou horas de investigação.
 
 ### 5.2 Limitações Observadas
-
-> *Descreva as limitações que você encontrou ao usar IA...*
+A IA tem dificuldade inicial em deduzir o sistema operacional do usuário se não for explicitamente avisada, o que resultou em comandos incompatíveis com o Windows. Além disso, a correção de um erro às vezes revelava um erro seguinte (ex: resolver o Secret do JWT revelou a incompatibilidade do Bcrypt), mostrando que a IA depende de testes sequenciais reais para avançar.
 
 ### 5.3 Aprendizados
-
-> *Descreva o que você aprendeu sobre o uso de IA no desenvolvimento de software...*
-
----
-
-> **📝 LEMBRETE:** Este documento deve refletir o uso **real** de ferramentas de IA durante o desenvolvimento. Seja honesto e detalhado em suas respostas. O objetivo não é avaliar se a IA foi usada, mas sim como ela foi utilizada de forma crítica e responsável.
+A experiência mostrou que a IA não substitui o teste funcional. Para sistemas distribuídos (microsserviços), o valor da IA não está apenas em gerar código, mas em explicar como testá-lo (como forçar a abertura do circuit breaker e ler métricas). O maior aprendizado foi entender *por que* o código da IA funciona, e não apenas copiá-lo cegamente, garantindo domínio para a apresentação técnica.
