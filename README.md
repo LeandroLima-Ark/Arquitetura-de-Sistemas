@@ -299,4 +299,6 @@ Arquitetura-de-Sistemas/
 
 Projeto desenvolvido como parte da disciplina de **Arquitetura de Sistemas**.
 
+Grupo do projeto: Daniel Suassuna, Guilherme Hentges, Henrique Valença, Kristyson Alpino, Leandro Lima e Pedro Victor Gomes
+
 > **Nota sobre uso de IA:** Este projeto utilizou assistência de IA (Antigravity/Claude) para implementação. Detalhes em `docs/ai-usage.md`.
